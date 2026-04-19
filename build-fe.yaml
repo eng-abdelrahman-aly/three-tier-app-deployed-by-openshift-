@@ -1,0 +1,41 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: fe-build
+  labels:
+    app: fe
+spec:
+  # المصدر Binary لأننا سنرفع الملفات (index.html, default.conf, Dockerfile)
+  source:
+    type: Binary
+  
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+      # نستخدم Nginx كصورة أساسية للبناء بدلاً من Node
+      from:
+        kind: ImageStreamTag
+        name: nginx-unprivileged:alpine
+  
+  # الموارد المطلوبة (أصبحت قليلة جداً الآن لأننا لا نقوم بعمل Build)
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+  # مكان حفظ الصورة الناتجة
+  output:
+    to:
+      kind: ImageStreamTag
+      name: fe-image:latest
+
+  # التشغيل التلقائي عند تغيير الإعدادات
+  triggers:
+  - type: ConfigChange
+
+  successfulBuildsHistoryLimit: 2
+  failedBuildsHistoryLimit:

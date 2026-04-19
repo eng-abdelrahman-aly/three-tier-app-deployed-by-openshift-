@@ -1,0 +1,202 @@
+# --- 1. SAFETY & SCALING ---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: buzzel-quota
+spec:
+  hard:
+    pods: "10"
+    requests.memory: "4Gi"
+
+---
+# --- 2. IMAGE TRACKING (ImageStreams) ---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: be-image
+spec:
+  lookupPolicy:
+    local: true # يسمح للـ Deployment بالبحث عن الصورة محلياً باسمها فقط
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: fe-image
+spec:
+  lookupPolicy:
+    local: true
+
+---
+# --- 3. PERSISTENT STORAGE ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# --- 4. NETWORKING (Services) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector:
+    app: db
+  ports:
+  - port: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: be-service
+spec:
+  selector:
+    app: be
+  ports:
+  - port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe-service
+spec:
+  selector:
+    app: fe
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# --- 5. DATA LAYER (Postgres StatefulSet) ---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+spec:
+  serviceName: "db"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: buzzel_db
+        - name: POSTGRES_PASSWORD
+          value: abdo123
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        # الجزء المفقود الذي تسبب في المشكلة:
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: db-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: db-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+# --- 6. BACKEND LOGIC ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: be-deployment
+  annotations:
+    # التحديث التلقائي عند تغير الـ ImageStream
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"be-image:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"backend\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: be
+  template:
+    metadata:
+      labels:
+        app: be
+    spec:
+      containers:
+      - name: backend
+        image: be-image:latest # سيعرف أنها محلية بسبب lookupPolicy في الـ IS
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: buzzel_db
+        - name: DB_PASSWORD
+          value: abdo123
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+
+---
+# --- 7. FRONTEND LOGIC ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-deployment
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"fe-image:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"frontend\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fe
+  template:
+    metadata:
+      labels:
+        app: fe
+    spec:
+      containers:
+      - name: frontend
+        image: fe-image:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# --- 8. EXTERNAL ACCESS ---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fe-route
+spec:
+  to:
+    kind: Service
+    name: fe-service
+  port:
+    targetPort: 80

@@ -1,0 +1,25 @@
+# --- 9. BUILD BACKEND (Binary) ---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: be-build
+spec:
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "200m"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: be-image:latest
+  triggers:
+  - type: ConfigChange
